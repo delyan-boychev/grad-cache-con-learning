@@ -21,7 +21,6 @@ class GradCache:
             chunk_size: int,
             loss_fn: Callable[..., Tensor],
             loss_type: str = "SupCon",
-            split_input_fn: Callable[[Any, int], Any] = None,
             fp16: bool = False,
             scaler: GradScaler = None,
     ):
@@ -30,7 +29,6 @@ class GradCache:
             param.requires_grad_(True)
         self.chunk_size = chunk_size
 
-        self.split_input_fn = split_input_fn
         self.loss_fn = loss_fn
         self.loss_type = loss_type
 
@@ -55,9 +53,6 @@ class GradCache:
         return self.cache_step(*args, **kwargs)
 
     def split_inputs(self, model_input, chunk_size: int) -> List:
-        # delegate splitting to user provided function
-        if self.split_input_fn is not None:
-            return self.split_input_fn(model_input, chunk_size)
         if isinstance(model_input, Tensor):
             return list(model_input.split(chunk_size, dim=0))
 
