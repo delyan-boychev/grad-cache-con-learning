@@ -8,7 +8,8 @@ import torch
 from torch import nn, Tensor
 from torch.cuda.amp import GradScaler, autocast
 
-from grad_cache.context_managers import RandContext
+from grad_cache_con_learning.context_managers import RandContext
+from losses import SupConLoss, ConLoss
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class GradCache:
             model: nn.Module,
             chunk_size: int,
             loss_fn: Callable[..., Tensor],
+            loss_type: str = "SupCon",
             split_input_fn: Callable[[Any, int], Any] = None,
             fp16: bool = False,
             scaler: GradScaler = None,
@@ -30,6 +32,16 @@ class GradCache:
 
         self.split_input_fn = split_input_fn
         self.loss_fn = loss_fn
+        self.loss_type = loss_type
+
+        if self.loss_type != "SelfCon" and self.loss_type != "SupCon" and self.loss_type != "SimCLR":
+            raise Exception("Loss not implemented")
+        
+        if self.loss_type == "SelfCon" and not isinstance(self.loss_fn, ConLoss):
+            raise Exception("'loss_type' does not correspond to 'loss_fn'")
+        if (self.loss_type == "SupCon" or self.loss_type == "SimCLR") and not isinstance(self.loss_fn, SupConLoss):
+            raise Exception("'loss_type' does not correspond to 'loss_fn'")
+        
 
         if fp16:
             assert scaler is not None, "mixed precision training requires a gradient scaler passed in"
@@ -68,14 +80,14 @@ class GradCache:
         else:
             return []
 
-    def compute_loss(self, reps: Tensor, labels:Tensor, **loss_kwargs) -> Tensor:
+    def compute_loss(self, reps: Tensor, labels:Tensor = None, **loss_kwargs) -> Tensor:
         loss = self.loss_fn(reps, labels, **loss_kwargs)
         return loss
 
     def forward_no_grad(
             self,
             model: nn.Module,
-            model_input,
+            model_input: Tensor,
     ) -> [Tensor, List[RandContext]]:
         rnd_states = []
         model_reps = []
@@ -83,13 +95,18 @@ class GradCache:
         with torch.no_grad():
             for x in model_input:
                 rnd_states.append(RandContext(*self.get_input_tensors(x)))
-                y1, y2 = model(x)
-                model_reps.append(torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1))
-
+                if self.loss_type == "SelfCon":
+                    y1, y2 = model(x)
+                    model_reps.append(torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1))
+                else:
+                    features = model(x)
+                    bsz = features.shape[0]/2
+                    f1, f2 = torch.split(features, [bsz, bsz], dim=0)
+                    model_reps.append(torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1))
         model_reps = torch.cat(model_reps, dim=0)
         return model_reps, rnd_states
 
-    def build_cache(self, reps: Tensor, labels: Tensor, **loss_kwargs) -> [List[Tensor], Tensor]:
+    def build_cache(self, reps: Tensor, labels: Tensor=None, **loss_kwargs) -> [List[Tensor], Tensor]:
         reps = reps.detach().requires_grad_()
         with autocast() if self.fp16 else nullcontext():
             loss = self.compute_loss(reps, labels, **loss_kwargs)
@@ -118,17 +135,24 @@ class GradCache:
 
         for x, state, gradient, sync_context in zip(model_input, random_states, cached_gradients, sync_contexts):
             with sync_context():
-                with state:
-                    y1, y2 = model(x)
+                if self.loss_type == "SelfCon":
+                    with state:
+                        y1, y2 = model(x)
+                    reps = torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1)
+                else:
+                    with state:
+                        features = model(x)
+                    bsz = features.shape[0]/2
+                    f1, f2 = torch.split(features, [bsz, bsz], dim=0)
+                    reps = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
                 reps = torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1)
-
                 surrogate = torch.dot(reps.flatten(), gradient.flatten())
                 surrogate.backward()
 
     def cache_step(
             self,
-            model_input,
-            labels,
+            model_input: Tensor,
+            labels: Tensor=None,
             no_sync_except_last: bool = False,
             **loss_kwargs
     ) -> Tensor:

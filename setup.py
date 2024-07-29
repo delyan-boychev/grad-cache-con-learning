@@ -1,13 +1,13 @@
 from setuptools import setup
 
 setup(
-    name='GradCache',
+    name='Grad Cache Contastive Learning',
     version='0.0.1',
-    packages=['grad_cache'],
+    packages=['grad_cache_con_learning'],
     package_dir={'': 'src'},
-    url='https://github.com/luyug/GradCache',
+    url='https://github.com/delyan-boychev/grad-cache-con-learning',
     license='Apache-2.0',
-    author='Luyu Gao',
-    author_email='luyug@cs.cmu.edu',
+    author='Delyan Boychev',
+    author_email='delyan.boychev05@gmail.com',
     description=''
 )
