@@ -1,63 +1,33 @@
-
-
-
-
-# Gradient Cache
-Gradient Cache is a simple technique for unlimitedly scaling contrastive learning batch far beyond GPU/TPU memory constraint. This means training that used to take heavy hardware, e.g. 8 V100 GPU, can be done on a single GPU. In addition, Gradient Cache allow users to replace big RAM GPU/TPU with much more cost efficient high FLOP low RAM systems.
-
-This repo holds a generic implementation of Gradient Cache described in our paper [Scaling Deep Contrastive Learning Batch Size under Memory Limited Setup
-](https://arxiv.org/abs/2101.06983). Both Pytorch and JAX frameworks are supported.
-```
-@inproceedings{gao2021scaling,
-     title={Scaling Deep Contrastive Learning Batch Size under Memory Limited Setup},
-     author={Luyu Gao, Yunyi Zhang, Jiawei Han, Jamie Callan},
-     booktitle ={Proceedings of the 6th Workshop on Representation Learning for NLP},
-     year={2021},
-}
-```
-
-**NEW: We now support JAX and TPU!**
-
-Gradient Cache has also been integrated into dense passage retrieval (DPR). Checkout our [GC-DPR toolkit](https://github.com/luyug/GC-DPR).
+# Gradient Cache Contrastive Learning
+Gradient Cache Contrastive Learning is a technique for unlimitedly scaling contrastive learning batch far beyond GPU/TPU memory constraint in Computer Vision. This means training that used to take heavy hardware, e.g. 8 V100 GPU, can be done on a single GPU. In addition, Gradient Cache allow users to replace big RAM GPU/TPU with much more cost efficient high FLOP low RAM systems. It is an adopted version of the paper [Scaling Deep Contrastive Learning Batch Size under Memory Limited Setup](https://arxiv.org/abs/2101.06983) for the SimCLR, SupCon and SelfCon losses.
 ## Installation
-First install your desired deep learning backend, either Pytorch or JAX.  To install GradCache, clone this repo and run pip.
-```
-git clone https://github.com/luyug/GradCache
-cd GradCache
-pip install .
-```
-For development,
-```
-pip install --editable .
+First install Pytorch.  To install `grad-cache-con-learning`, run the following:
+```sh
+pip install grad_cache_con_learning
 ```
 
 ## Usage
-Gradient caching functionalities are implemented in `GradCache` class.  If you are developing a **new project** instead of patching an old one, also checkout our [functional approach](#functional-approach) for a effort reduced approach. 
-
-For JAX/Flax user, take a look at a simple train function [here](https://github.com/luyug/GradCache/blob/8463340a15a2395fc33b9a1f40f5f4946b7cbad8/src/grad_cache/cachex/training.py#L9).
+Gradient caching functionalities are implemented in `GradCache` class.
 
 ### Initialization
-The class's `__init__` method defines the cache and has several functional parameters `*_fn` for easy adjust of model behaviors. Alternatively you can also sub-class GradCache.
-```
+The class's `__init__` method defines the cache and has a functional parameter `loss_fn` to flexibly set your loss function. 
+```py
 grad_cache.GradCache(  
-  models: List[nn.Module],  
-  chunk_sizes: Union[int, List[int]],  
-  loss_fn: Callable[..., Tensor],  
-  split_input_fn: Callable[[Any, int], Any] = None,  
-  get_rep_fn: Callable[..., Tensor] = None,  
-  fp16: bool = False,  
-  scaler: GradScaler = None,  
+  model: nn.Module,  
+  chunk_size: int,
+  loss_fn: Callable[..., Tensor],
+  loss_type: str = "SupCon",
+  fp16: bool = False,
+  scaler: GradScaler = None, 
 )
 ``` 
-**models** - A list of encoder models to be updated with with the Gradient Cache.
+**model** - The encoder model to be updated with with the Gradient Cache.
 
-**chunk_sizes** - An integer indicating chunk size. Or a list of integers of chunk size for each model. This controls for each model the sub-batch size to run forward-backward pass and should be set based on available GPU memory. A value too small will leave the GPU under utilized.
+**chunk_size** - An integer indicating chunk size. This controls the sub-batch size to run forward-backward pass and should be set based on available GPU memory. A value too small will leave the GPU under utilized.
 
-**loss_fn** -  A loss function that takes representation tensors of number equal to number of models in `models` and arbitrary numbers of keyword arguments. It should compute loss based on the input tensors, and in no case modify the input tensors' relations in the autograd graph, which are later relied upon to create the gradient cache.
+**loss_fn** -  A loss function that takes representation tensors. It should compute the loss of the model based on the representations. The options are `grad_cache_con_learning.losses.SupConLoss` for SimCLR and SupCon, `grad_cache_con_learning.losses.ConLoss` for SelfCon.
 
-**split_input_fn** - An optional function that split generic model input into chunks based on defined chunk_sizes. If not provided, this  class will try its best to split the inputs of supported types. See `split_inputs` function.
-
-**get_rep_fn** - An optional function that takes generic model output and return representation tensors. If  not provided, the generic output is assumed to be the representation tensor.
+**loss_type** - The loss type: 'SimCLR', 'SupCon' or 'SelfCon'.
 
 **fp16** - If True, run mixed precision training, which requires scaler to also be set.
 
@@ -66,238 +36,132 @@ grad_cache.GradCache(
 ### Cache Gradient Step
 To run a cached gradient computatoin step, call `cache_step` function,
 
-```
+```py
 cache_step(  
-  *model_inputs,  
+  model_input,
+  model_input: Tensor,
+  labels: Tensor = None,  
   no_sync_except_last: bool = False,  
   **loss_kwargs  
 )
 ```
 Run a single gradient cache step. Upon function return, updates are computed for each model in `self.models` with gradient populated on the weights, as if the `model_inputs` are run as a huge single batch on sufficiently large hardware.  Calling an GradCache object with `__call__` will also invoke this function.
 
-**model_inputs** - List of inputs to each encoder model. Should be in similar order as `self.models`.
+**model_input** - Tensor which is the input for the encoder model.
+**labels** -  Tensor which contains the true labels for training. For SimCLR we do not provide labels.
 
 **no_sync_except_last** - If True, under distributed setup, for each model, only trigger gradient reduction across processes for the last sub-batch's forward-backward pass. This could come in handy when dealing with a) large model, and/or b) non trivial number of sub-batches.
 
-**loss_kwargs** - Additional keyword arguments to the loss function `loss_fn`. This is intended to enable flexible loss computation (thanks to dynamic graph in Pytorch) such as reduction, weighting, etc. Potentially, using `loss_kwargs` you can incorporate outputs from those encoder models not tracked by the cache. 
+**loss_kwargs** - Additional keyword arguments to the loss function `loss_fn`.
 
 **Return** - loss, the current steps loss scaler tensor (detached from the graph).
 
-### Natively Supported Input Types
-- x: Tensor - will be passed in as `model(x)`
-- x: List[Tensor] - will be passed in as `model(*x)`
-- x: Dict[str, Tensor] (or UserDict[str, Tensor]) - will be passed in as `model(**x)`
-- x: Tuple[List[Tensor], Dict[str, Tensor]] - will be passed in as `model(*x[0], **x[1])`
+## Example Usage with Contastive Losses (SimCLR, SupCon, SelfCon)
+You need to preserve the original training procedure from the methods - [SimCLR and SupCon](https://github.com/HobbitLong/SupContrast), [SelfCon](https://github.com/raymin0223/self-contrastive-learning). It works only with the original methods.
 
-Other generic input are not fully supported, we perform model call using the following heuristics,
-
-- x: List[Any] - will be passed in as `model(*x)`
-- x: Dict[str, Any] - will be passed in as `model(**x)`
-- x: Tuple[List[Any], Dict[str, Any]] - will be passed in as `model(*x[0], **x[1])`
-
-To run with them, `split_input_fn` should be specified during cache initialization to break these inputs  into smaller batches.  In some rare cases, you may also need to override  `get_input_tensors` when its heuristic can not grab enough tensors that covers all cuda devices that hold some tensors in the input.
-
-
-## Example Usage with Huggingface Transformers
-### Learning a Bi-encoder
-Say we want to learn a embedding space of labels and text. Consider the following four pairs. (In practice, you will have many more and much longer text entries.)
-```
-labels = ['fruit', 'meat', 'school', 'company']
-texts = [
-  'this is an apple', 
-  'steak should be cooked medium rare', 
-  'cmu is pittsburgh', 
-  'apple sells laptop'
-]
-```
-
-Initialize our encoder models,
-```
-from transformers import AutoTokenizer, AutoModel
-tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-encoder1 = AutoModel.from_pretrained("bert-base-uncased").cuda()
-encoder2 = AutoModel.from_pretrained("bert-base-uncased").cuda()
-```
-Initialize the GradCache object,
-```
-from grad_cache import GradCache
-from grad_cache.loss import SimpleContrastiveLoss
-
-loss_fn = SimpleContrastiveLoss()
+### SupCon Example
+First, you need to initialize the GradCache object,
+```py
+from grad_cache_con_learning import GradCache
+from grad_cache_con_learning.losses import SupConLoss
+...
+loss_fn = SupConLoss()
 gc = GradCache(
-  models=[encoder1, encoder2], 
+  model=model, 
   chunk_sizes=2, 
-  loss_fn=loss_fn, 
-  get_rep_fn=lambda v: v.pooler_output
+  loss_fn=loss_fn,
+  loss_type="SupCon"
 )
+...
 ```
-Here we use the **get_rep_fn** argument to specify a function that takes generic Huggingface model output and return the actual representation tensor. 
-
-Create model input,
-```
-xx = tokenizer(tt, return_tensors='pt', padding=True)
-yy = tokenizer(tt2, return_tensors='pt', padding=True)
-```
-Run a cache step,
-```
-gc(xx, yy, reduction='mean')
-```
-Here we use `reduction='mean'` as a **loss_kwargs** to control loss behavior. With a defined `optimizer`, the full gradient update can be done as,
-```
+Only replace:
+```py
+...
 optimizer.zero_grad()
-gc(xx, yy, reduction='mean')
+features = model(images)
+f1, f2 = torch.split(features, [batch_size, batch_size], dim=0)
+features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+loss = criterion(features, y)
+loss.backward()
 optimizer.step()
+...
+```
+with the following:
+```py
+...
+optimizer.zero_grad()
+gc(x, y)
+optimizer.step()
+...
+```
+### SimCLR Example
+First, you need to initialize the GradCache object,
+```py
+from grad_cache_con_learning import GradCache
+from grad_cache_con_learning.losses import SupConLoss
+...
+loss_fn = SupConLoss()
+gc = GradCache(
+  model=model, 
+  chunk_size=2, 
+  loss_fn=loss_fn,
+  loss_type="SimCLR" 
+)
+...
+```
+Only replace:
+```py
+...
+optimizer.zero_grad()
+features = model(images)
+f1, f2 = torch.split(features, [batch_size, batch_size], dim=0)
+features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+loss = criterion(features)
+loss.backward()
+optimizer.step()
+...
+```
+with the following:
+```py
+...
+optimizer.zero_grad()
+gc(images)
+optimizer.step()
+...
+```
+### SelfCon Example
+First, you need to initialize the GradCache object,
+```py
+from grad_cache_con_learning import GradCache
+from grad_cache_con_learning.losses import ConLoss
+...
+loss_fn = ConLoss()
+gc = GradCache(
+  model=model, 
+  chunk_size=2, 
+  loss_fn=loss_fn,
+  loss_type="SelfCon"
+)
+...
+```
+Only replace:
+```py
+...
+optimizer.zero_grad()
+features = model(images)
+f1, f2 = features
+features = torch.cat([f.unsqueeze(1) for f in f1] + [f2.unsqueeze(1)], dim=1)
+loss = criterion(features, labels)
+loss.backward()
+optimizer.step()
+...
+```
+with the following:
+```py
+...
+optimizer.zero_grad()
+gc(images, labels)
+optimizer.step()
+...
 ``` 
 
-### Use Tied Encoder?
-This is naturally handled by the (magic of) dynamic graph. You pass shallow copies of the same encoder model to the GradCache init method.
-```
-tied_encoder = AutoModel.from_pretrained("bert-base-uncased").cuda()
-gc = GradCache(
-  models=[tied_encoder , tied_encoder], 
-  chunk_sizes=2, 
-  loss_fn=loss_fn, 
-  get_rep_fn=lambda v: v.pooler_output
-)
-```
-Under the hood, distinct hooks will be registered to make correct gradient computation.
-### Distributed Training with Multiple GPUs?
-We expect cross process communication of representations to be handled by the `loss_fn`. 
-```
-from grad_cache.loss import DistributedContrastiveLoss
-loss_fn_dist = DistributedContrastiveLoss()
-```
-Properly wrap the the encoder models for gradient reduction,
-```
-encoder1_ddp = DistributedDataParallel(
-	encoder1, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-encoder2_ddp = DistributedDataParallel(
-	encoder2, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-```
-You can initialize the cache use the distributed loss and the DDP models,
-```
-gc = GradCache(
-  models=[encoder1_ddp, encoder2_ddp], 
-  chunk_sizes=2, 
-  loss_fn=loss_fn_dist, 
-  get_rep_fn=lambda v: v.pooler_output
-)
-```
-Run a cache step,
-```
-gc(xx, yy, no_sync_except_last=True, reduction='mean')
-```
-Set `no_sync_except_last=True` to avoid unnecessary gradient reduction.
-
-## Functional Approach
-### Decorators
-If you are developing a new project, we recommend also checking out the decorators we have provided to create higher order functions for cache.
-```
-grad_cache.functional.cached(func: Callable[..., Tensor])
-```
-A decorator that takes a model call function into a cached compatible version.  
-
-**func** - A function that calls the model and return representation tensor.
-
-**Return** - A function that returns 1) representation leaf tensors for cache construction, 2) a closure function for  the 2nd forward and the cached backward. Call 2) with 1) as argument after calling backward on the loss Tensor.
-```
-grad_cache.functional.cat_input_tensor(func: Callable[..., Tensor])
-```
-A decorator that concatenates positional and keyword arguments of type List[Tensor] into a single Tensor  on the 0th dimension. This can come in handy dealing with results of representation tensors from multiple  cached forward.  
-
-**func** - A loss function 
-
-**Return** -  Decorated loss function for cached results.
-
-```
-grad_cache.functional.gather_input_tensor(func: Callable[..., Tensor], axis=0)
-```
-A decorator that all-gather positional and keyword arguments of type Tensor and concatenate them on axis. Intended to be used to create distributed contrastive learning loss.
-
-**func** - A loss function 
-
-**Return** -  Decorated loss function for distributed training.
-### Usage
-The functional decorators are particular useful if your data loader is emitting small batches, from which you can construct the big batch. Say you also want to do automatic mixed precision, we first define the model call function and loss function,
-```
-from grad_cache.functional import cached, cat_input_tensor
-
-import torch
-import torch.nn.functional as F
-from torch.cuda.amp import autocast
-
-@cached
-@autocast()
-def  call_model(model, input):
-	return model(**input).pooler_output
-
-@cat_input_tensor
-@autocast()
-def  contrastive_loss(x, y):
-	target = torch.arange(0, y.size(0), int(y.size(0) / x.size(0)), device=x.device)
-	scores = torch.matmul(x, y.transpose(0, 1))
-	return F.cross_entropy(scores, target=target)
-```
-Say you have a DataLoader `loader` emitting small batches of tuple `(xx, yy)`  of size (M * N) and  that you want to train by aggregating 16 small batches to get a batch of (16M * 16N),
-
-```
-cache_x = []
-cache_y = []
-closures_x = []
-closures_y = []
-
-for step, sub_batch in enumerate(loader):  
-    xx, yy = sub_batch
-    rx, cx = call_model(bert, xx)
-    ry, cy = call_model(bert, yy)
-    
-    cache_x.append(rx)
-    cache_y.append(ry)
-    closuresx.append(cx)
-    closuresy.append(cy)
-    
-    if (step + 1) % 16 == 0:
-        loss = contrastive_loss(cache_x, cache_y)
-        scaler.scale(loss).backward()
-        
-	for f, r in zip(closuresx, cache_x):
-            f(r)
-        for f, r in zip(closuresy, cache_y):
-            f(r)
-
-        cache_x = []
-        cache_y = []
-        closures_x = []
-        closures_y = []
-	
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad()
-``` 
-### Distributed Training
-Running distributed multi-process training requires: 1) (all-)gather representations across devices and 2) (all-reduce) gradients across devices. Both steps will happen **outside** the cached decorated funtions. 
-
-The latter is easy to achieve by wrapping encoders, e.g. a `bert`, in `DistributedDataParallel`.
-```
-bert = DistributedDataParallel(
-	bert, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-```
-
-The former requires extra distributed ops in the loss function, which should be done according the original loss definition. For example,
-```
-from torch import distributed as dist
-from grad_cache.functional import cat_input_tensor, gather_input_tensor
-
-@cat_input_tensor
-@gather_input_tensor
-@autocast()
-def contrastive_loss(x, y):
-    target = torch.arange(0, y.size(0), int(y.size(0) / x.size(0)), device=x.device)
-    scores = torch.matmul(x, y.transpose(0, 1))
-    # scale the loss as DistributedDataParallel will do mean reduce
-    return F.cross_entropy(scores, target=target) * dist.get_world_size()  
-```
-## Code Structure
-[grad_cache/grad_cache.py](src/grad_cache/grad_cache.py) - Define the GradCache class. The code is under 300 lines including comments. For development, we encourage you to read through it.
-
-[grad_cache/functional.py](src/grad_cache/functional.py) - Define decorators to create higher order function for gradient caching from ordinary model call functions and loss functions.
