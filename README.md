@@ -3,7 +3,7 @@ Gradient Cache Contrastive Learning is a technique for unlimitedly scaling contr
 ## Installation
 First install Pytorch.  To install `grad_cache_con_learning`, run the following:
 ```sh
-pip install grad_cache_con_learning
+pip install grad-cache-con-learning
 ```
 
 ## Usage

@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='grad_cache_con_learning',
-    version='0.0.1',
+    version='1.0.0',
     packages=['grad_cache_con_learning'],
     package_dir={'': 'src'},
     url='https://github.com/delyan-boychev/grad-cache-con-learning',
