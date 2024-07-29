@@ -1,7 +1,7 @@
 # Gradient Cache Contrastive Learning
 Gradient Cache Contrastive Learning is a technique for unlimitedly scaling contrastive learning batch far beyond GPU/TPU memory constraint in Computer Vision. This means training that used to take heavy hardware, e.g. 8 V100 GPU, can be done on a single GPU. In addition, Gradient Cache allow users to replace big RAM GPU/TPU with much more cost efficient high FLOP low RAM systems. It is an adopted version of the paper [Scaling Deep Contrastive Learning Batch Size under Memory Limited Setup](https://arxiv.org/abs/2101.06983) for the [SimCLR](https://arxiv.org/abs/2002.05709), [SupCon](https://arxiv.org/abs/2004.11362) and [SelfCon](https://arxiv.org/abs/2106.15499) losses.
 ## Installation
-First install Pytorch.  To install `grad-cache-con-learning`, run the following:
+First install Pytorch.  To install `grad_cache_con_learning`, run the following:
 ```sh
 pip install grad_cache_con_learning
 ```
