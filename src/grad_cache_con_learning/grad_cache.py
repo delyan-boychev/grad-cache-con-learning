@@ -95,7 +95,7 @@ class GradCache:
                     model_reps.append(torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1))
                 else:
                     features = model(x)
-                    bsz = features.shape[0]/2
+                    bsz = int(features.shape[0]/2)
                     f1, f2 = torch.split(features, [bsz, bsz], dim=0)
                     model_reps.append(torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1))
         model_reps = torch.cat(model_reps, dim=0)
@@ -137,7 +137,7 @@ class GradCache:
                 else:
                     with state:
                         features = model(x)
-                    bsz = features.shape[0]/2
+                    bsz = int(features.shape[0]/2)
                     f1, f2 = torch.split(features, [bsz, bsz], dim=0)
                     reps = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
                 reps = torch.cat([f.unsqueeze(1) for f in y1] + [y2.unsqueeze(1)], dim=1)
